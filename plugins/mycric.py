@@ -3,7 +3,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from HTMLParser import HTMLParser
-
+from pluginmanager import Plugin
 
 def clean(unclean):
     return re.sub(r"^\s+|\s+$","", unclean)
@@ -14,7 +14,7 @@ class ScoreBoard(HTMLParser):
         HTMLParser.__init__(self)
         self.flag = 0
         self.data = []
-        self.team_name = "bangladesh"
+        self.team_name = "india"
         self.url = self._extract_match_url('http://static.cricinfo.com/rss/livescores.xml')
 
     def handle_starttag(self, tag, attrs):
@@ -31,7 +31,7 @@ class ScoreBoard(HTMLParser):
         html = self.wget(url)
         root = ET.fromstring(html)
         companion_url = "http://www.espncricinfo.com/ci/engine/match/companion/data/main.json"
-        return "".join([ companion_url  if "companion" in item.find('./title').text.lower() else item.find('./link').text for item in root.findall('./channel/item') if self.team_name in item.find('./title').text.lower() ])
+        return "".join([ companion_url  if "companion" in item.find('./link').text.lower() else item.find('./link').text for item in root.findall('./channel/item') if self.team_name in item.find('./title').text.lower() ])
 
     def wget(self, url):
         req = urllib2.Request(url)
@@ -39,8 +39,9 @@ class ScoreBoard(HTMLParser):
         return response.read()
 
     def get_score_card(self, unformatted):
+        print unformatted
         self.match_state = {'team':{}, 'batsmen': {}, 'bowler': {}}
-        parsed = re.match(r"([^\(]+)\(([^\)]+)\)([^|]+).*", unformatted)
+        parsed = re.match(r"([^\(]+)\(([^\)]+)\)([^|]+)?.*", unformatted)
         team = re.match(r"([^\d]+)(\d+)(\/(\d))?", parsed.group(1))
         overs = re.match(r"([\d\.]+) ov", parsed.group(2))
         self.match_state['team']={'team_name': clean(team.group(1)), 'runs': int(team.group(2)), 'wickets': int(team.group(4)), 'overs': float(overs.group(1)) }
@@ -54,13 +55,14 @@ class Displayer:
         self.old_score = {}
         self.event = ""
 
-    def display(self, score):
+    def display(self, score, bubble):
         board = score.match_state['team']
-        print score.match_state
+
         if self.old_score and board['overs'] != self.old_score['team']['overs']:
             title = board['team_name'] + " " + str(board['runs']) + "/" + str(board['wickets']) +" Overs: " + str(board['overs'])
-            message = "\n".join([ "%s: %s" % (k,str(v)) for k,v in score.match_state['batsmen'].iteritems() ])
+            message = " & ".join([ "%s: %s" % (k,str(v)) for k,v in score.match_state['batsmen'].iteritems() ])
             submessage = self.get_submessage(score.match_state)
+            bubble.popup(message, title, submessage, "http://www.google.com")
             print title
             print message
             print submessage
@@ -80,20 +82,21 @@ class Displayer:
     def runs_taken(self, latest):
         self.event = runs_taken = latest['team']['runs'] - self.old_score['team']['runs']
         who = " ".join([ man for man, run in latest['batsmen'].iteritems() if self.old_score['batsmen'].has_key(man) if int(run) - (int(self.old_score['batsmen'][man])) ])
-        return latest['bowler'].keys()[0] + " to " + who + str(runs_taken) if runs_taken else None
+        return {1:"1 run ", 2:"2 runs ", 3:"3 runs ", 4:"FOUR ", 5:"5 ? strange ", 6:"SIXER " }[runs_taken] +  latest['bowler'].keys()[0] + " to " + who if runs_taken else None
 
     def get_submessage(self, score):
         submsg = (self.match_delay(score) or  self.wicket_gone(score) or self.runs_taken(score) )
         return submsg if submsg else ""
 
 
-class LiveCricket:
+class LiveCricket(Plugin):
     def __init__(self):
         self.scoreboard = ScoreBoard()
         self.displayer = Displayer()
 
     def notify(self, bubble):
         unformatted = ""
+        print "URL: " + self.scoreboard.url
         if "main.json" in self.scoreboard.url:
             match_json = self.scoreboard.wget(self.scoreboard.url)
             jsoned = json.loads(match_json)
@@ -103,11 +106,10 @@ class LiveCricket:
             unformatted = self.scoreboard.data[0]
             print "<title>: " + unformatted
         self.scoreboard.get_score_card(unformatted)
-        self.displayer.display(self.scoreboard)
+        self.displayer.display(self.scoreboard, bubble)
 
-if __name__ == "__main__":
-    livecric = LiveCricket()
-    f = open("/Users/knamasi/workspace/desktopnotify/server/jsonop", "r")
-    for line in f:
-        jsoned = json.loads(line)
-        livecric.notify(jsoned[0]['current_summary'])
+
+# BUGS
+# Drinks to non drinks
+# hard coded location of terminal-notifier bin
+# 15 seconds not working
